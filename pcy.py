@@ -1,6 +1,7 @@
 # Imports
 from itertools import combinations
 from pyspark import SparkContext
+from typing import Tuple
 
 from pyspark.sql import (
     SparkSession,
@@ -24,11 +25,13 @@ class _PCYParams:
             self,
             min_support: int = 100,
             min_confidence: float = 0.8,
-            num_buckets: int = 5000
+            num_buckets: int = 5000,
+            item_col: str = "item_list"
     ) -> None:
         self.min_support = min_support
         self.min_confidence = min_confidence
         self.num_buckets = num_buckets
+        self.item_col = item_col
     # --- end __init__
 
     # getters
@@ -38,6 +41,8 @@ class _PCYParams:
         return self.min_confidence
     def get_num_buckets(self) -> int:
         return self.num_buckets
+    def get_item_col(self) -> str:
+        return self.item_col
     # --- end getters
 
     # setters
@@ -50,6 +55,9 @@ class _PCYParams:
     def set_num_buckets(self, num_buckets: int):
         self.num_buckets = num_buckets
         return self
+    def set_item_col(self, item_col: str):
+        self.item_col = item_col
+        return self
     # --- end setters
 # -- end class _PCYParams
 
@@ -60,9 +68,10 @@ class PCYModel(_PCYParams):
             min_confidence: float = 0.8,
             num_buckets: int = 5000,
             frequent_pairs: DataFrame = None,
-            association_rules: DataFrame = None
+            association_rules: DataFrame = None,
+            item_col: str = "item_list"
     ) -> None:
-        super().__init__(min_support, min_confidence, num_buckets)
+        super().__init__(min_support, min_confidence, num_buckets, item_col)
         self.frequent_pairs = frequent_pairs
         self.association_rules = association_rules
     # -- end __init__
@@ -85,18 +94,20 @@ class PCY(_PCYParams):
             self,
             min_support: int = 100,
             min_confidence: float = 0.8,
-            num_buckets: int = 5000
+            num_buckets: int = 5000,
+            item_col: str = "item_list"
     ) -> None:
-        super().__init__(min_support, min_confidence, num_buckets)
+        super().__init__(min_support, min_confidence, num_buckets, item_col)
     # -- end __init__
 
-    def _pass1(self, baskets: DataFrame) -> tuple[DataFrame, DataFrame, DataFrame]:
+    def _pass1(self, baskets: DataFrame) -> Tuple[DataFrame, DataFrame, DataFrame]:
         # Pass 1:
         # FOR (each basket) :
         #     FOR (each item in the basket):
         #         add 1 to item's count;
+        item_cols_name = self.get_item_col()
 
-        item_counts = baskets.select(f.explode("item_list").alias("item")) \
+        item_counts = baskets.select(f.explode(item_cols_name).alias("item")) \
                              .groupBy("item") \
                              .count()
         item_counts.cache()
@@ -106,7 +117,7 @@ class PCY(_PCYParams):
         frequent_items.cache()
         
         baskets_with_id = baskets.withColumn("basket_id", f.monotonically_increasing_id())
-        exploded_baskets = baskets_with_id.select("basket_id", f.explode("item_list").alias("item"))
+        exploded_baskets = baskets_with_id.select("basket_id", f.explode(item_cols_name).alias("item"))
 
         # If item i does not appear in s baskets, 
         # then no pair including i can appear in s baskets
@@ -145,20 +156,21 @@ class PCY(_PCYParams):
     def _pass2(self, baskets: DataFrame, frequent_items: DataFrame, frequent_buckets: DataFrame) -> DataFrame:
         # Pass 2:
         def pair_gen(items: list[str]) -> list[tuple[str, str]]:
-            items.sort()
-            return list(combinations(items, 2))
+            return list(combinations(sorted(items), 2))
         
+        item_cols_name = self.get_item_col()
+
         pair_gen_udf = f.udf(pair_gen, ArrayType(ArrayType(StringType())))
-        all_pairs = baskets.withColumn("pairs", pair_gen_udf(f.col("item_list"))) \
+        all_pairs = baskets.withColumn("pairs", pair_gen_udf(f.col(item_cols_name))) \
                            .select(f.explode("pairs").alias("pair")) \
                            .select(f.col("pair")[0].alias("item1"), f.col("pair")[1].alias("item2"))
         
-        freq_item_to_join = frequent_items.select(f.col("item").alias("item"))
+        freq_item_to_join = frequent_items.select(f.col("item").alias("item_alias"))
 
-        candidates = all_pairs.join(freq_item_to_join, all_pairs.item1 == freq_item_to_join.item, "inner") \
-                              .select("item1", "item2")
-        candidates = candidates.join(freq_item_to_join, candidates.item2 == freq_item_to_join.item, "inner") \
-                               .select("item1", "item2")
+        candidates = all_pairs.join(freq_item_to_join, all_pairs.item1 == freq_item_to_join.item_alias, "inner") \
+                             .select("item1", "item2")
+        candidates = candidates.join(freq_item_to_join, candidates.item2 == freq_item_to_join.item_alias, "inner") \
+                             .select("item1", "item2")
         # Cache candidates as it's used for bucket joining
         candidates.cache()
         
@@ -168,7 +180,8 @@ class PCY(_PCYParams):
         # )
 
         def hash_single_pair(item1: str, item2: str) -> int:
-            return hash(f"{item1}|{item2}") % self.get_num_buckets()
+            items = sorted([item1, item2])
+            return hash(f"{items[0]}|{items[1]}") % self.get_num_buckets()
 
         hash_single_udf = f.udf(hash_single_pair, IntegerType())
         pair_with_bucket = candidates.withColumn(
@@ -183,9 +196,9 @@ class PCY(_PCYParams):
         ).select("item1", "item2")
 
         frequent_pairs = filtered_pairs.groupBy("item1", "item2").count() \
-                                       .filter(f.col("count") >= self.get_min_support()) \
-                                       .select("item1", "item2", f.col("count").alias("support")) \
-                                       .orderBy(f.col("support").desc())
+                                    .filter(f.col("count") >= self.get_min_support()) \
+                                    .select("item1", "item2", f.col("count").alias("support")) \
+                                    .orderBy(f.col("support").desc())
         # Cache frequent_pairs as it's used for rule generation
         frequent_pairs.cache()
         
@@ -201,17 +214,11 @@ class PCY(_PCYParams):
         # B -> A:
         b_a = frequent_pairs.join(item_counts, frequent_pairs.item2 == item_counts.item)
         b_a = b_a.withColumn("conf", f.col("support") / f.col("count")).filter(f.col("conf") >= self.get_min_confidence())
-
+        
         b_a = b_a.select(
             f.col("item2").alias("item1"), 
             f.col("item1").alias("item2"), 
             "support", 
-            "conf")
-
-        b_a = b_a.select(
-            f.col("item2").alias("item1"),
-            f.col("item1").alias("item2"),
-            "support",
             "conf"
         )
 
@@ -233,6 +240,7 @@ class PCY(_PCYParams):
             min_support = self.get_min_support(),
             min_confidence = self.get_min_confidence(),
             num_buckets = self.get_num_buckets(),
+            item_col = self.get_item_col(),
             frequent_pairs = frequent_pairs,
             association_rules = association_rules
         )

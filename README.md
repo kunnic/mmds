@@ -41,8 +41,8 @@ from pcy import PCY, PCYModel
 
 **Update!:** The input `DataFrame` must now contain a column of type `ArrayType(StringType)` representing the items in each basket. The name of this column can be specified using the `item_col` parameter. The default is `"item_list"`.
 
-3. Create a PCY model with `min_support`, `min_confidence`, and `num_buckets` parameters:
+3. Create a PCY model with `min_support`, `min_confidence`, `num_buckets` and `item_col` parameters:
 ```python
-model = PCY(min_support=<your_support>, min_confidence=<your_confidence>, num_buckets=<your_bucket_number>)
+model = PCY(min_support=<your_support>, min_confidence=<your_confidence>, num_buckets=<your_bucket_number>,item_col=<your_item_col_name>)
 # model.fit(baskets_df)
 ```

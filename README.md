@@ -37,10 +37,8 @@ You can use this project by cloning the repository and installing the requiremen
 from pcy import PCY, PCYModel
 ```
 
-2. The `baskets.csv` file should be loaded into a Spark `DataFrame` with the following schema:
-```
-["id", "date", "item_list"]
-```
+2. ~~The `baskets.csv` file should be loaded into a Spark `DataFrame` with the following schema: `["id", "date", "item_list"]`~~
+**Update:** The input `DataFrame` must now contain a column of type `ArrayType(StringType)` representing the items in each basket. The name of this column can be specified using the `item_col` parameter. The default is `"item_list"`.
 
 3. Create a PCY model with `min_support`, `min_confidence`, and `num_buckets` parameters:
 ```python

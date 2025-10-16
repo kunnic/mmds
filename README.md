@@ -7,7 +7,7 @@
 
 # PCY Algorithm Implementation with PySpark
 
-The Park–Chen–Yu (PCY) algorithm is implemented here, inspired by the structure of Apache Spark's `spark.ml.fpm`. The project is organized for readability and maintainability.
+The Park–Chen–Yu (PCY) algorithm is implemented neatly here, inspired by the structure of Apache Spark's `spark.ml.fpm`. The project is organized for readability and maintainability.
 
 ## Library version
 
@@ -17,11 +17,10 @@ The Park–Chen–Yu (PCY) algorithm is implemented here, inspired by the struct
 pyspark-pcy-algorithm/
 ├── data/
 │   └── baskets.csv
-├── notebooks/
-│   └── task02c.ipynb
 ├── .gitignore
 ├── LICENSE
 ├── pcy.py
+├── pcy.ipynb
 └── README.md
 ```
 
